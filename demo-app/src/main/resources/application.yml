@@ -1,0 +1,50 @@
+spring:
+  application:
+    name: txscope-demo
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/txscope
+    username: txscope
+    password: txscope
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 5          # Small pool → easier to saturate
+      minimum-idle: 2
+      connection-timeout: 3000      # 3s → fail fast under load
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      pool-name: TxScopeHikariPool
+      # leakDetectionThreshold: 2000  # Optional, enable later for S4
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+
+  # External HTTP simulation target (WireMock or simple sleep endpoint)
+  # For S1 we use a simple internal delay; later can point to real external service
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,hikaricp
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+logging:
+  level:
+    com.txscope: DEBUG
+    com.zaxxer.hikari: DEBUG
+    org.hibernate.SQL: WARN
