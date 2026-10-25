@@ -1,6 +1,8 @@
 package com.txscope.starter;
 
+
 import com.txscope.core.collector.pool.PoolSnapshotCollector;
+import com.txscope.core.collector.postgres.PostgresActivityCollector;
 import com.txscope.core.collector.transaction.TransactionTracker;
 import com.txscope.core.collector.transaction.TransactionTrackingAspect;
 import com.txscope.core.report.ReportService;
@@ -40,10 +42,17 @@ public class TxScopeAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    public PostgresActivityCollector postgresActivityCollector(DataSource dataSource) {
+        return new PostgresActivityCollector(dataSource);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
     public ReportService reportService(
             PoolSnapshotCollector poolSnapshotCollector,
-            TransactionTracker transactionTracker) {
-        return new ReportService(poolSnapshotCollector, transactionTracker);
+            TransactionTracker transactionTracker,
+            PostgresActivityCollector postgresActivityCollector) {
+        return new ReportService(poolSnapshotCollector, transactionTracker, postgresActivityCollector);
     }
 
     @Bean

@@ -1,11 +1,12 @@
 package com.txscope.core.report;
 
-
 import com.txscope.core.collector.pool.PoolSnapshotCollector;
+import com.txscope.core.collector.postgres.PostgresActivityCollector;
 import com.txscope.core.collector.transaction.TransactionTracker;
 import com.txscope.core.model.pool.DiagnosticReport;
 import com.txscope.core.model.pool.Fact;
 import com.txscope.core.model.pool.PoolSnapshot;
+import com.txscope.core.model.postgres.PgSession;
 import com.txscope.core.model.transaction.OpenTransaction;
 
 import java.time.Instant;
@@ -14,16 +15,21 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Builds a diagnostic report from available collectors.
+ * Builds a diagnostic report from pool, transactions and PostgreSQL activity.
  */
 public class ReportService {
 
     private final PoolSnapshotCollector poolCollector;
     private final TransactionTracker transactionTracker;
+    private final PostgresActivityCollector postgresCollector;
 
-    public ReportService(PoolSnapshotCollector poolCollector, TransactionTracker transactionTracker) {
+    public ReportService(
+            PoolSnapshotCollector poolCollector,
+            TransactionTracker transactionTracker,
+            PostgresActivityCollector postgresCollector) {
         this.poolCollector = poolCollector;
         this.transactionTracker = transactionTracker;
+        this.postgresCollector = postgresCollector;
     }
 
     public DiagnosticReport generateReport() {
@@ -48,6 +54,11 @@ public class ReportService {
 
         List<OpenTransaction> openTxs = transactionTracker.snapshot();
         for (Fact fact : factsFromTransactions(openTxs)) {
+            builder.addFact(fact);
+        }
+
+        List<PgSession> sessions = postgresCollector.collect();
+        for (Fact fact : factsFromPostgres(sessions)) {
             builder.addFact(fact);
         }
 
@@ -117,5 +128,68 @@ public class ReportService {
             }
         }
         return facts;
+    }
+
+    private List<Fact> factsFromPostgres(List<PgSession> sessions) {
+        List<Fact> facts = new ArrayList<>();
+        if (sessions.isEmpty()) {
+            facts.add(new Fact("P0", "No other PostgreSQL sessions found for this database", "postgres"));
+            return facts;
+        }
+
+        long idleInTx = sessions.stream()
+                .filter(s -> s.getState() != null && s.getState().contains("idle in transaction"))
+                .count();
+        long active = sessions.stream()
+                .filter(s -> "active".equalsIgnoreCase(s.getState()))
+                .count();
+        long blocked = sessions.stream().filter(PgSession::isBlocked).count();
+
+        facts.add(new Fact(
+                "P1",
+                "PostgreSQL sessions: total=" + sessions.size()
+                        + " active=" + active
+                        + " idle_in_transaction=" + idleInTx
+                        + " blocked=" + blocked,
+                "postgres"
+        ));
+
+        int i = 2;
+        for (PgSession s : sessions) {
+            if (s.getState() != null && s.getState().contains("idle in transaction")
+                    && s.getSecondsInState() != null && s.getSecondsInState() >= 1) {
+                facts.add(new Fact(
+                        "P" + i++,
+                        "Session pid=" + s.getPid()
+                                + " state=idle in transaction for " + s.getSecondsInState() + "s",
+                        "postgres"
+                ));
+            }
+            if (s.isBlocked()) {
+                facts.add(new Fact(
+                        "P" + i++,
+                        "Session pid=" + s.getPid()
+                                + " is blocked (wait_event="
+                                + nullToDash(s.getWaitEventType()) + "/"
+                                + nullToDash(s.getWaitEvent()) + ")",
+                        "postgres"
+                ));
+            }
+            if ("active".equalsIgnoreCase(s.getState())
+                    && s.getSecondsInState() != null && s.getSecondsInState() >= 2) {
+                facts.add(new Fact(
+                        "P" + i++,
+                        "Session pid=" + s.getPid()
+                                + " active for " + s.getSecondsInState() + "s"
+                                + " wait_event=" + nullToDash(s.getWaitEvent()),
+                        "postgres"
+                ));
+            }
+        }
+        return facts;
+    }
+
+    private static String nullToDash(String v) {
+        return v != null ? v : "-";
     }
 }
