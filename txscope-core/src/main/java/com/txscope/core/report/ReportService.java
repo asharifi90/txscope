@@ -3,6 +3,7 @@ package com.txscope.core.report;
 import com.txscope.core.collector.pool.PoolSnapshotCollector;
 import com.txscope.core.collector.postgres.PostgresActivityCollector;
 import com.txscope.core.collector.transaction.TransactionTracker;
+import com.txscope.core.model.Hypothesis;
 import com.txscope.core.model.pool.DiagnosticReport;
 import com.txscope.core.model.pool.Fact;
 import com.txscope.core.model.pool.PoolSnapshot;
@@ -14,38 +15,39 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
-/**
- * Builds a diagnostic report from pool, transactions and PostgreSQL activity.
- */
 public class ReportService {
 
     private final PoolSnapshotCollector poolCollector;
     private final TransactionTracker transactionTracker;
     private final PostgresActivityCollector postgresCollector;
+    private final HypothesisEngine hypothesisEngine;
 
     public ReportService(
             PoolSnapshotCollector poolCollector,
             TransactionTracker transactionTracker,
-            PostgresActivityCollector postgresCollector) {
+            PostgresActivityCollector postgresCollector,
+            HypothesisEngine hypothesisEngine) {
         this.poolCollector = poolCollector;
         this.transactionTracker = transactionTracker;
         this.postgresCollector = postgresCollector;
+        this.hypothesisEngine = hypothesisEngine;
     }
 
     public DiagnosticReport generateReport() {
         Instant now = Instant.now();
         DiagnosticReport.Builder builder = DiagnosticReport.builder().generatedAt(now);
+        List<Fact> allFacts = new ArrayList<>();
+        PoolSnapshot pool = null;
 
         Optional<PoolSnapshot> poolOpt = poolCollector.collect();
         if (poolOpt.isEmpty()) {
             builder.addInsufficientEvidence(
                     "Pool snapshot unavailable (DataSource is not HikariCP or pool not started)");
         } else {
-            PoolSnapshot pool = poolOpt.get();
+            pool = poolOpt.get();
             builder.pool(pool);
-            for (Fact fact : factsFromPool(pool)) {
-                builder.addFact(fact);
-            }
+            List<Fact> poolFacts = factsFromPool(pool);
+            allFacts.addAll(poolFacts);
             if (pool.getActive() == 0 && pool.getPending() == 0) {
                 builder.addInsufficientEvidence(
                         "Pool is idle — run a scenario load script then request the report again");
@@ -53,14 +55,17 @@ public class ReportService {
         }
 
         List<OpenTransaction> openTxs = transactionTracker.snapshot();
-        for (Fact fact : factsFromTransactions(openTxs)) {
+        allFacts.addAll(factsFromTransactions(openTxs));
+
+        List<PgSession> sessions = postgresCollector.collect();
+        allFacts.addAll(factsFromPostgres(sessions));
+
+        for (Fact fact : allFacts) {
             builder.addFact(fact);
         }
 
-        List<PgSession> sessions = postgresCollector.collect();
-        for (Fact fact : factsFromPostgres(sessions)) {
-            builder.addFact(fact);
-        }
+        List<Hypothesis> hypotheses = hypothesisEngine.evaluate(pool, allFacts);
+        builder.hypotheses(hypotheses);
 
         return builder.build();
     }
@@ -109,13 +114,11 @@ public class ReportService {
         if (openTxs.isEmpty()) {
             return facts;
         }
-
         facts.add(new Fact(
                 "T1",
                 openTxs.size() + " Spring transaction(s) currently open",
                 "transaction"
         ));
-
         int i = 2;
         for (OpenTransaction tx : openTxs) {
             if (tx.getDurationMs() >= 1000) {

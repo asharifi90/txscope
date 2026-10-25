@@ -5,6 +5,7 @@ import com.txscope.core.collector.pool.PoolSnapshotCollector;
 import com.txscope.core.collector.postgres.PostgresActivityCollector;
 import com.txscope.core.collector.transaction.TransactionTracker;
 import com.txscope.core.collector.transaction.TransactionTrackingAspect;
+import com.txscope.core.report.HypothesisEngine;
 import com.txscope.core.report.ReportService;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
@@ -48,11 +49,22 @@ public class TxScopeAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    public HypothesisEngine hypothesisEngine() {
+        return new HypothesisEngine();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
     public ReportService reportService(
             PoolSnapshotCollector poolSnapshotCollector,
             TransactionTracker transactionTracker,
-            PostgresActivityCollector postgresActivityCollector) {
-        return new ReportService(poolSnapshotCollector, transactionTracker, postgresActivityCollector);
+            PostgresActivityCollector postgresActivityCollector,
+            HypothesisEngine hypothesisEngine) {
+        return new ReportService(
+                poolSnapshotCollector,
+                transactionTracker,
+                postgresActivityCollector,
+                hypothesisEngine);
     }
 
     @Bean
