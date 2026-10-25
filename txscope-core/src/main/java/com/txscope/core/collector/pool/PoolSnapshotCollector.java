@@ -1,6 +1,6 @@
-package com.txscope.core.collector;
+package com.txscope.core.collector.pool;
 
-import com.txscope.core.model.PoolSnapshot;
+import com.txscope.core.model.pool.PoolSnapshot;
 import com.zaxxer.hikari.HikariDataSource;
 import com.zaxxer.hikari.HikariPoolMXBean;
 import org.slf4j.Logger;

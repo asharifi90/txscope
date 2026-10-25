@@ -1,4 +1,4 @@
-package com.txscope.core.model;
+package com.txscope.core.model.pool;
 
 /**
  * Point-in-time snapshot of a HikariCP pool.

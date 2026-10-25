@@ -1,4 +1,4 @@
-package com.txscope.core.model;
+package com.txscope.core.model.pool;
 
 /**
  * A single observed fact. No interpretation — only what was measured.

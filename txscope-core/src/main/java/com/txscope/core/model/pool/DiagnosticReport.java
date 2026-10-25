@@ -1,4 +1,4 @@
-package com.txscope.core.model;
+package com.txscope.core.model.pool;
 
 import java.time.Instant;
 import java.util.ArrayList;
