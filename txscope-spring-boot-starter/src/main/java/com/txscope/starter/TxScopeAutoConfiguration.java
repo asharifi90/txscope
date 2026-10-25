@@ -1,6 +1,8 @@
 package com.txscope.starter;
 
-import com.txscope.core.collector.PoolSnapshotCollector;
+import com.txscope.core.collector.pool.PoolSnapshotCollector;
+import com.txscope.core.collector.transaction.TransactionTracker;
+import com.txscope.core.collector.transaction.TransactionTrackingAspect;
 import com.txscope.core.report.ReportService;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
@@ -8,15 +10,14 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.EnableAspectJAutoProxy;
 
 import javax.sql.DataSource;
 
-/**
- * Wires TxScope collectors and the report endpoint when a DataSource is present.
- */
 @AutoConfiguration
 @ConditionalOnClass(DataSource.class)
 @ConditionalOnBean(DataSource.class)
+@EnableAspectJAutoProxy
 public class TxScopeAutoConfiguration {
 
     @Bean
@@ -27,8 +28,22 @@ public class TxScopeAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public ReportService reportService(PoolSnapshotCollector poolSnapshotCollector) {
-        return new ReportService(poolSnapshotCollector);
+    public TransactionTracker transactionTracker() {
+        return new TransactionTracker();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public TransactionTrackingAspect transactionTrackingAspect(TransactionTracker transactionTracker) {
+        return new TransactionTrackingAspect(transactionTracker);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ReportService reportService(
+            PoolSnapshotCollector poolSnapshotCollector,
+            TransactionTracker transactionTracker) {
+        return new ReportService(poolSnapshotCollector, transactionTracker);
     }
 
     @Bean

@@ -1,9 +1,12 @@
 package com.txscope.core.report;
 
-import com.txscope.core.collector.PoolSnapshotCollector;
-import com.txscope.core.model.DiagnosticReport;
-import com.txscope.core.model.Fact;
-import com.txscope.core.model.PoolSnapshot;
+
+import com.txscope.core.collector.pool.PoolSnapshotCollector;
+import com.txscope.core.collector.transaction.TransactionTracker;
+import com.txscope.core.model.pool.DiagnosticReport;
+import com.txscope.core.model.pool.Fact;
+import com.txscope.core.model.pool.PoolSnapshot;
+import com.txscope.core.model.transaction.OpenTransaction;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -16,33 +19,36 @@ import java.util.Optional;
 public class ReportService {
 
     private final PoolSnapshotCollector poolCollector;
+    private final TransactionTracker transactionTracker;
 
-    public ReportService(PoolSnapshotCollector poolCollector) {
+    public ReportService(PoolSnapshotCollector poolCollector, TransactionTracker transactionTracker) {
         this.poolCollector = poolCollector;
+        this.transactionTracker = transactionTracker;
     }
 
     public DiagnosticReport generateReport() {
         Instant now = Instant.now();
-        Optional<PoolSnapshot> poolOpt = poolCollector.collect();
-
         DiagnosticReport.Builder builder = DiagnosticReport.builder().generatedAt(now);
 
+        Optional<PoolSnapshot> poolOpt = poolCollector.collect();
         if (poolOpt.isEmpty()) {
             builder.addInsufficientEvidence(
                     "Pool snapshot unavailable (DataSource is not HikariCP or pool not started)");
-            return builder.build();
+        } else {
+            PoolSnapshot pool = poolOpt.get();
+            builder.pool(pool);
+            for (Fact fact : factsFromPool(pool)) {
+                builder.addFact(fact);
+            }
+            if (pool.getActive() == 0 && pool.getPending() == 0) {
+                builder.addInsufficientEvidence(
+                        "Pool is idle — run a scenario load script then request the report again");
+            }
         }
 
-        PoolSnapshot pool = poolOpt.get();
-        builder.pool(pool);
-
-        for (Fact fact : factsFromPool(pool)) {
+        List<OpenTransaction> openTxs = transactionTracker.snapshot();
+        for (Fact fact : factsFromTransactions(openTxs)) {
             builder.addFact(fact);
-        }
-
-        if (pool.getActive() == 0 && pool.getPending() == 0) {
-            builder.addInsufficientEvidence(
-                    "Pool is idle — run a scenario load script (e.g. ./scripts/load-s1.sh) then request the report again");
         }
 
         return builder.build();
@@ -59,7 +65,6 @@ public class ReportService {
                     "pool"
             ));
         }
-
         if (pool.hasWaiters()) {
             facts.add(new Fact(
                     "F" + n++,
@@ -68,7 +73,6 @@ public class ReportService {
                     "pool"
             ));
         }
-
         if (pool.getIdle() == 0 && pool.getActive() > 0) {
             facts.add(new Fact(
                     "F" + n++,
@@ -76,7 +80,6 @@ public class ReportService {
                     "pool"
             ));
         }
-
         if (facts.isEmpty()) {
             facts.add(new Fact(
                     "F1",
@@ -87,7 +90,32 @@ public class ReportService {
                     "pool"
             ));
         }
+        return facts;
+    }
 
+    private List<Fact> factsFromTransactions(List<OpenTransaction> openTxs) {
+        List<Fact> facts = new ArrayList<>();
+        if (openTxs.isEmpty()) {
+            return facts;
+        }
+
+        facts.add(new Fact(
+                "T1",
+                openTxs.size() + " Spring transaction(s) currently open",
+                "transaction"
+        ));
+
+        int i = 2;
+        for (OpenTransaction tx : openTxs) {
+            if (tx.getDurationMs() >= 1000) {
+                facts.add(new Fact(
+                        "T" + i++,
+                        "Long-running transaction name=" + tx.getName()
+                                + " durationMs=" + tx.getDurationMs(),
+                        "transaction"
+                ));
+            }
+        }
         return facts;
     }
 }
