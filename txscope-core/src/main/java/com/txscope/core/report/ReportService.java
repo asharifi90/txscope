@@ -60,6 +60,11 @@ public class ReportService {
         List<PgSession> sessions = postgresCollector.collect();
         allFacts.addAll(factsFromPostgres(sessions));
 
+        if (sessions.isEmpty() && pool != null && pool.isFullyActive()) {
+            builder.addInsufficientEvidence(
+                    "PostgreSQL activity could not be sampled — pool has no free connection for the collector");
+        }
+
         for (Fact fact : allFacts) {
             builder.addFact(fact);
         }

@@ -9,8 +9,7 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 /**
- * Rule-based engine: turns facts into labelled hypotheses (S1–S4 oriented).
- * Never invents links that are not supported by facts.
+ * Rule-based engine: facts → labelled hypotheses (S1–S4 oriented).
  */
 public class HypothesisEngine {
 
@@ -20,13 +19,14 @@ public class HypothesisEngine {
             return result;
         }
 
-
         boolean poolSaturated = pool != null && pool.isFullyActive();
         boolean hasWaiters = pool != null && pool.hasWaiters();
+
         boolean longTx = facts.stream().anyMatch(f ->
                 "transaction".equals(f.getSource())
                         && f.getText() != null
                         && f.getText().contains("Long-running transaction"));
+
         boolean openTx = facts.stream().anyMatch(f ->
                 "transaction".equals(f.getSource())
                         && f.getText() != null
@@ -38,17 +38,20 @@ public class HypothesisEngine {
                         && f.getText().contains("idle in transaction")
                         && !f.getText().contains("idle_in_transaction=0"));
 
+        // Strict: real blocked fact, not "blocked=0" in a summary line
         boolean blocked = facts.stream().anyMatch(f ->
                 "postgres".equals(f.getSource())
                         && f.getText() != null
                         && (f.getText().contains(" is blocked")
-                        || f.getText().matches(".*blocked=[1-9].*")));
+                        || f.getText().matches(".*\\bblocked=[1-9].*")));
 
         boolean longActiveSql = facts.stream().anyMatch(f ->
                 "postgres".equals(f.getSource())
                         && f.getText() != null
                         && f.getText().contains(" active for "));
-        boolean s2LockServices = facts.stream().anyMatch(f ->
+
+        // S2 demo / lock scenario: holder + waiter visible in Spring txs
+        boolean s2LockPattern = facts.stream().anyMatch(f ->
                 "transaction".equals(f.getSource())
                         && f.getText() != null
                         && f.getText().contains("S2LockService.holdLock"))
@@ -57,27 +60,31 @@ public class HypothesisEngine {
                         && f.getText() != null
                         && f.getText().contains("S2LockService.waitForLock"));
 
-        if ((poolSaturated || hasWaiters) && (blocked || s2LockServices)) {
+        // --- H2: lock contention (before H1) ---
+        if ((poolSaturated || hasWaiters) && (blocked || s2LockPattern)) {
             result.add(new Hypothesis(
                     "H2",
-                    "PostgreSQL lock contention — sessions blocked, pool filling with waiters",
+                    "PostgreSQL lock contention — sessions blocked or waiting on the same lock",
                     blocked ? "medium" : "low",
                     supportingIds(facts, "pool", "transaction", "postgres"),
                     List.of(
-                            "Inspect pg_locks and pg_stat_activity for wait_event=Lock",
-                            "Check long-running transactions that hold locks",
+                            "Inspect pg_locks and pg_stat_activity (wait_event_type=Lock)",
+                            "Find the session that holds the lock and how long its transaction has been open",
                             "Review lock ordering and transaction duration"
                     )
             ));
         }
 
-        // S1-like: pool full + long tx + idle in transaction (connection held outside SQL)
-        if ((poolSaturated || hasWaiters) && (longTx || openTx) && !blocked && !longActiveSql) {
-            // Prefer H1 even if Postgres idle-in-tx fact is weak
+        // --- H1: held across non-DB work (skip if H2 already matched) ---
+        if (result.stream().noneMatch(h -> "H2".equals(h.getId()))
+                && (poolSaturated || hasWaiters)
+                && (longTx || openTx)
+                && !blocked
+                && !longActiveSql) {
             result.add(new Hypothesis(
                     "H1",
                     "Connection held across non-database work inside a transaction boundary",
-                    idleInTx ? "medium" : "low",
+                    (idleInTx || (poolSaturated && longTx)) ? "medium" : "low",
                     supportingIds(facts, "pool", "transaction", "postgres"),
                     List.of(
                             "Search for external HTTP/RPC or Thread.sleep inside @Transactional methods",
@@ -87,8 +94,8 @@ public class HypothesisEngine {
             ));
         }
 
-        // S3-like: pool full + long active SQL in Postgres
-        if ((poolSaturated || hasWaiters) && longActiveSql && !idleInTx) {
+        // --- H3: slow SQL ---
+        if ((poolSaturated || hasWaiters) && longActiveSql && !idleInTx && !s2LockPattern) {
             result.add(new Hypothesis(
                     "H3",
                     "Connections busy executing slow SQL in PostgreSQL",
@@ -102,8 +109,8 @@ public class HypothesisEngine {
             ));
         }
 
-        // S4-like: pool saturated, no open Spring tx, no idle-in-tx, no blocked — possible leak
-        if (poolSaturated && !openTx && !idleInTx && !blocked && !longActiveSql) {
+        // --- H4: possible leak ---
+        if (poolSaturated && !openTx && !idleInTx && !blocked && !longActiveSql && !s2LockPattern) {
             result.add(new Hypothesis(
                     "H4",
                     "Possible connection leak — pool exhausted without clear in-flight DB work",
@@ -117,7 +124,7 @@ public class HypothesisEngine {
             ));
         }
 
-        // Generic saturation with little detail
+        // --- H0: saturated but unclear ---
         if (result.isEmpty() && (poolSaturated || hasWaiters)) {
             result.add(new Hypothesis(
                     "H0",
@@ -133,14 +140,6 @@ public class HypothesisEngine {
         }
 
         return result;
-    }
-
-    private static boolean hasSourceText(List<Fact> facts, String source, String textPart) {
-        String lower = textPart.toLowerCase();
-        return facts.stream()
-                .anyMatch(f -> source.equals(f.getSource())
-                        && f.getText() != null
-                        && f.getText().toLowerCase().contains(lower));
     }
 
     private static List<String> supportingIds(List<Fact> facts, String... sources) {
