@@ -38,7 +38,7 @@ public class ScenarioController {
      * Connection held while doing non-DB work → pool saturates, Postgres looks idle.
      */
     @GetMapping("/s1")
-    public ResponseEntity<Item> s1(@RequestParam(defaultValue = "3000") long delayMs) {
+    public ResponseEntity<Item> s1(@RequestParam(name = "delayMs", defaultValue = "3000") long delayMs) {
         return ResponseEntity.ok(s1Service.execute(delayMs));
     }
 
@@ -47,7 +47,7 @@ public class ScenarioController {
      * Start this first, then call /s2/wait concurrently.
      */
     @GetMapping("/s2/hold")
-    public ResponseEntity<Map<String, Object>> s2Hold(@RequestParam(defaultValue = "10000") long holdMs) {
+    public ResponseEntity<Map<String, Object>> s2Hold(@RequestParam(name = "holdMs", defaultValue = "10000") long holdMs) {
         s2Service.holdLock(holdMs);
         return ResponseEntity.ok(Map.of(
                 "scenario", "S2",
@@ -61,7 +61,7 @@ public class ScenarioController {
      * Connections stay borrowed during the wait → pool pressure.
      */
     @GetMapping("/s2/wait")
-    public ResponseEntity<Map<String, Object>> s2Wait(@RequestParam(defaultValue = "5000") long timeoutHintMs) {
+    public ResponseEntity<Map<String, Object>> s2Wait(@RequestParam(name = "timeoutHintMs", defaultValue = "5000") long timeoutHintMs) {
         s2Service.waitForLock(timeoutHintMs);
         return ResponseEntity.ok(Map.of(
                 "scenario", "S2",
@@ -73,7 +73,7 @@ public class ScenarioController {
      * S3 – Slow SQL (pg_sleep). Connection legitimately busy in the database.
      */
     @GetMapping("/s3")
-    public ResponseEntity<Map<String, Object>> s3(@RequestParam(defaultValue = "5") double seconds) {
+    public ResponseEntity<Map<String, Object>> s3(@RequestParam(name = "seconds", defaultValue = "5") double seconds) {
         s3Service.executeSlowQuery(seconds);
         return ResponseEntity.ok(Map.of(
                 "scenario", "S3",

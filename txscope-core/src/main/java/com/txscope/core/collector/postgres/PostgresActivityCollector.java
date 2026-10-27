@@ -22,33 +22,41 @@ public class PostgresActivityCollector {
     private static final Logger log = LoggerFactory.getLogger(PostgresActivityCollector.class);
 
     private static final String SESSIONS_SQL = """
-            SELECT
-                a.pid,
-                a.state,
-                a.wait_event_type,
-                a.wait_event,
-                a.application_name,
-                EXTRACT(EPOCH FROM (now() - a.state_change))::bigint AS seconds_in_state,
-                EXISTS (
-                    SELECT 1 FROM pg_locks l1
-                    JOIN pg_locks l2 ON l1.locktype = l2.locktype
-                        AND l1.database IS NOT DISTINCT FROM l2.database
-                        AND l1.relation IS NOT DISTINCT FROM l2.relation
-                        AND l1.page IS NOT DISTINCT FROM l2.page
-                        AND l1.tuple IS NOT DISTINCT FROM l2.tuple
-                        AND l1.virtualxid IS NOT DISTINCT FROM l2.virtualxid
-                        AND l1.transactionid IS NOT DISTINCT FROM l2.transactionid
-                        AND l1.classid IS NOT DISTINCT FROM l2.classid
-                        AND l1.objid IS NOT DISTINCT FROM l2.objid
-                        AND l1.objsubid IS NOT DISTINCT FROM l2.objsubid
-                        AND l1.pid != l2.pid
-                    WHERE l1.pid = a.pid AND NOT l1.granted AND l2.granted
-                ) AS blocked
-            FROM pg_stat_activity a
-            WHERE a.datname = current_database()
-              AND a.pid != pg_backend_pid()
-            ORDER BY a.state_change NULLS LAST
-            """;
+        SELECT
+            a.pid,
+            a.state,
+            a.wait_event_type,
+            a.wait_event,
+            a.application_name,
+            EXTRACT(EPOCH FROM (now() - a.state_change))::bigint AS seconds_in_state,
+            (
+              a.wait_event_type = 'Lock'
+              OR EXISTS (
+                SELECT 1
+                FROM pg_locks blocked
+                JOIN pg_locks blocking
+                  ON blocking.locktype = blocked.locktype
+                 AND blocking.database IS NOT DISTINCT FROM blocked.database
+                 AND blocking.relation IS NOT DISTINCT FROM blocked.relation
+                 AND blocking.page IS NOT DISTINCT FROM blocked.page
+                 AND blocking.tuple IS NOT DISTINCT FROM blocked.tuple
+                 AND blocking.virtualxid IS NOT DISTINCT FROM blocked.virtualxid
+                 AND blocking.transactionid IS NOT DISTINCT FROM blocked.transactionid
+                 AND blocking.classid IS NOT DISTINCT FROM blocked.classid
+                 AND blocking.objid IS NOT DISTINCT FROM blocked.objid
+                 AND blocking.objsubid IS NOT DISTINCT FROM blocked.objsubid
+                 AND blocking.pid IS DISTINCT FROM blocked.pid
+                WHERE blocked.pid = a.pid
+                  AND NOT blocked.granted
+                  AND blocking.granted
+              )
+            ) AS blocked
+        FROM pg_stat_activity a
+        WHERE a.datname = current_database()
+          AND a.pid <> pg_backend_pid()
+          AND a.backend_type = 'client backend'
+        ORDER BY a.state_change NULLS LAST
+        """;
 
     private final DataSource dataSource;
 

@@ -1,7 +1,5 @@
 package com.txscope.core.report;
 
-
-
 import com.txscope.core.model.Hypothesis;
 import com.txscope.core.model.pool.Fact;
 import com.txscope.core.model.pool.PoolSnapshot;
@@ -22,42 +20,69 @@ public class HypothesisEngine {
             return result;
         }
 
-        boolean poolSaturated = hasSourceText(facts, "pool", "active")
-                && (pool != null && pool.isFullyActive());
-        boolean hasWaiters = pool != null && pool.hasWaiters()
-                || hasSourceText(facts, "pool", "waiting");
-        boolean longTx = hasSourceText(facts, "transaction", "Long-running");
-        boolean openTx = hasSourceText(facts, "transaction", "currently open");
-        boolean idleInTx = hasSourceText(facts, "postgres", "idle in transaction");
-        boolean blocked = hasSourceText(facts, "postgres", "blocked");
-        boolean longActiveSql = hasSourceText(facts, "postgres", "active for");
+
+        boolean poolSaturated = pool != null && pool.isFullyActive();
+        boolean hasWaiters = pool != null && pool.hasWaiters();
+        boolean longTx = facts.stream().anyMatch(f ->
+                "transaction".equals(f.getSource())
+                        && f.getText() != null
+                        && f.getText().contains("Long-running transaction"));
+        boolean openTx = facts.stream().anyMatch(f ->
+                "transaction".equals(f.getSource())
+                        && f.getText() != null
+                        && f.getText().contains("currently open"));
+
+        boolean idleInTx = facts.stream().anyMatch(f ->
+                "postgres".equals(f.getSource())
+                        && f.getText() != null
+                        && f.getText().contains("idle in transaction")
+                        && !f.getText().contains("idle_in_transaction=0"));
+
+        boolean blocked = facts.stream().anyMatch(f ->
+                "postgres".equals(f.getSource())
+                        && f.getText() != null
+                        && (f.getText().contains(" is blocked")
+                        || f.getText().matches(".*blocked=[1-9].*")));
+
+        boolean longActiveSql = facts.stream().anyMatch(f ->
+                "postgres".equals(f.getSource())
+                        && f.getText() != null
+                        && f.getText().contains(" active for "));
+        boolean s2LockServices = facts.stream().anyMatch(f ->
+                "transaction".equals(f.getSource())
+                        && f.getText() != null
+                        && f.getText().contains("S2LockService.holdLock"))
+                && facts.stream().anyMatch(f ->
+                "transaction".equals(f.getSource())
+                        && f.getText() != null
+                        && f.getText().contains("S2LockService.waitForLock"));
+
+        if ((poolSaturated || hasWaiters) && (blocked || s2LockServices)) {
+            result.add(new Hypothesis(
+                    "H2",
+                    "PostgreSQL lock contention — sessions blocked, pool filling with waiters",
+                    blocked ? "medium" : "low",
+                    supportingIds(facts, "pool", "transaction", "postgres"),
+                    List.of(
+                            "Inspect pg_locks and pg_stat_activity for wait_event=Lock",
+                            "Check long-running transactions that hold locks",
+                            "Review lock ordering and transaction duration"
+                    )
+            ));
+        }
 
         // S1-like: pool full + long tx + idle in transaction (connection held outside SQL)
-        if ((poolSaturated || hasWaiters) && (longTx || openTx) && idleInTx && !blocked && !longActiveSql) {
+        if ((poolSaturated || hasWaiters) && (longTx || openTx) && !blocked && !longActiveSql) {
+            // Prefer H1 even if Postgres idle-in-tx fact is weak
             result.add(new Hypothesis(
                     "H1",
                     "Connection held across non-database work inside a transaction boundary",
-                    "medium",
+                    idleInTx ? "medium" : "low",
                     supportingIds(facts, "pool", "transaction", "postgres"),
                     List.of(
                             "Search for external HTTP/RPC or Thread.sleep inside @Transactional methods",
                             "Narrow transaction boundaries to DB-only sections",
                             "Consider moving external calls outside the transaction"
-                    )
-            ));
-        }
-
-        // S2-like: pool pressure + blocked sessions
-        if ((poolSaturated || hasWaiters) && blocked) {
-            result.add(new Hypothesis(
-                    "H2",
-                    "PostgreSQL lock contention — sessions blocked, pool filling with waiters",
-                    "medium",
-                    supportingIds(facts, "pool", "postgres"),
-                    List.of(
-                            "Inspect pg_locks and pg_blocking_pids for the blocker",
-                            "Check long-running transactions that hold locks",
-                            "Review isolation level and lock ordering"
                     )
             ));
         }

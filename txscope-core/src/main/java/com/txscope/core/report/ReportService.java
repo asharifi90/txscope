@@ -188,7 +188,18 @@ public class ReportService {
                         "postgres"
                 ));
             }
+            if ("Lock".equalsIgnoreCase(s.getWaitEventType())) {
+                facts.add(new Fact(
+                        "P" + i++,
+                        "Session pid=" + s.getPid()
+                                + " is blocked (wait_event="
+                                + nullToDash(s.getWaitEventType()) + "/"
+                                + nullToDash(s.getWaitEvent()) + ")",
+                        "postgres"
+                ));
+            }
         }
+
         return facts;
     }
 
