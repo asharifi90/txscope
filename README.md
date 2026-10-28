@@ -1,167 +1,77 @@
 # TxScope
 
-**Open-source diagnostic tool that explains *why* a Spring Boot / HikariCP / PostgreSQL application has no more DB connections — with facts, not guesses.**
+**Explains *why* a Spring Boot / HikariCP / PostgreSQL app has no more DB connections — with facts, not guesses.**
 
-When the connection pool is saturated, metrics only show the symptom (`active = max`, `pending > 0`).  
-Finding the real cause still requires manual correlation of pool state, Spring transactions, and PostgreSQL activity.  
-TxScope automates that correlation and produces a clear local report.
+When the pool is saturated, metrics only show the symptom (`active = max`, `pending > 0`).  
+TxScope correlates pool state, Spring transactions, and PostgreSQL activity into a local JSON report with labelled hypotheses.
 
-> **Status:** Early development — demo application + Scenario S1 available.  
-> Collectors, hypothesis engine and HTML/JSON report are next.
+> **Status:** Early development (MVP diagnostics work for S1–S4). Not a production-hardened release.
 
 ---
 
-## The problem
-
-Common production failure modes:
-
-| What you see | Typical root cause |
-|--------------|--------------------|
-| `Connection is not available, request timed out` | Connection held across non-DB work |
-| Hikari `active = max`, `pending > 0` | Long-running transaction or lock |
-| Application slow / unavailable | Pool exhausted while PostgreSQL looks healthy |
-
-Teams still piece the diagnosis together from Actuator metrics, logs, and `pg_stat_activity`. Under incident pressure this is slow and error-prone.
-
-## What TxScope does
-
-TxScope attaches to a Spring Boot + HikariCP + PostgreSQL application and produces, on demand, a **local HTML + JSON report** containing:
-
-1. **Pool snapshot** — active, idle, pending, max, timeouts, hold-time samples  
-2. **Long-held transactions / connections** — duration and application context when available  
-3. **PostgreSQL activity** — sessions, `wait_event`, blocking PIDs (read-only access)  
-4. **Facts** — only what was observed  
-5. **Hypotheses** — explicitly labelled, with confidence level and concrete next steps  
-6. **Insufficient evidence** — when data does not allow a conclusion  
-
-**Principles**
-
-- Facts before narrative  
-- Runs on the user’s infrastructure (no mandatory telemetry)  
-- Never collects SQL bind parameters  
-- Database privileges kept read-only as much as possible  
-- Reproducible failure scenarios to validate the tool  
-
-This is **not** a general-purpose APM and not a Datadog competitor.  
-It is a focused developer tool for the classic “pool is full” incident.
-
----
-
-## Quick start — reproduce the pain (current state)
-
-### Prerequisites
-
-- Java 21+
-- Maven 3.9+
-- Docker
-
-### 1. Start PostgreSQL
+## Quick start
 
 ```bash
 docker compose up -d
-```
-
-### 2. Run the demo application
-
-```bash
+mvn clean install -DskipTests
 mvn spring-boot:run -pl demo-app
 ```
 
-The pool is intentionally small (`maximum-pool-size: 5`) so saturation is easy to trigger.
-
-### 3. Trigger Scenario S1
-
-**S1** = external work (HTTP / sleep) performed *inside* a `@Transactional` method.  
-The connection is held for the whole duration even though almost no SQL is running.
-
 ```bash
-# Single request (holds a connection for 3 seconds)
-curl "http://localhost:8080/scenarios/s1?delayMs=3000"
-
-# Concurrent load → pool saturation
+# Saturate with scenario S1, then (while load runs):
 ./scripts/load-s1.sh
-```
 
-### 4. Observe the symptoms manually
-
-```bash
-# Hikari metrics
-curl -s http://localhost:8080/actuator/metrics/hikaricp.connections.active
-curl -s http://localhost:8080/actuator/metrics/hikaricp.connections.pending
-
-# PostgreSQL — most sessions should be idle or idle in transaction
-docker exec -it txscope-postgres psql -U txscope -d txscope \
-  -c "SELECT pid, state, wait_event_type, wait_event, query_start
-      FROM pg_stat_activity
-      WHERE datname = 'txscope';"
-```
-
-You should see:
-
-- Hikari `active` at maximum, `pending` > 0, possible timeouts  
-- PostgreSQL mostly healthy / idle-in-transaction (the expensive work is outside SQL)
-
-This is exactly the situation TxScope will later diagnose automatically.
-
----
-
-## Project structure
-
-```
-txscope/
-├── demo-app/                      # Spring Boot app with intentional failure scenarios
-├── txscope-core/                  # Model, collectors, correlation & hypothesis engines
-├── txscope-spring-boot-starter/   # Auto-configuration + report endpoint
-├── scripts/                       # Load scripts for the reference scenarios
-├── docs/                          # Architecture & scenario documentation
-├── docker-compose.yml
-└── pom.xml                        # Multi-module parent
+curl -s http://localhost:8080/internal/txscope/report | jq
 ```
 
 ---
 
-## Reference scenarios
+## Failure modes (demo)
 
-| ID | Scenario | Status |
-|----|----------|--------|
-| **S1** | External HTTP / blocking call inside `@Transactional` | Available |
-| **S2** | PostgreSQL lock contention | Planned |
-| **S3** | Slow SQL | Planned |
-| **S4** | Connection not returned (simulated leak) | Planned |
+| ID | Scenario | What happens | Hypothesis |
+|----|----------|--------------|------------|
+| **S1** | Work inside `@Transactional` | Connection held during sleep / HTTP-like delay | **H1** — held across non-DB work |
+| **S2** | Lock contention | One session holds a lock; others wait | **H2** — lock contention |
+| **S3** | Slow SQL | Connections busy in `pg_sleep` / long queries | **H3** — slow SQL in PostgreSQL |
+| **S4** | Connection leak | Connections borrowed and never returned | **H4** — possible leak |
 
-Success criterion: a developer who only has the TxScope report identifies the contributing factor faster than with metrics + logs alone, with an acceptable false-hypothesis rate.
-
----
-
-## Roadmap
-
-- [x] Multi-module Maven structure  
-- [x] Demo application + Scenario S1  
-- [ ] Scenarios S2, S3, S4  
-- [ ] Pool, transaction and PostgreSQL collectors  
-- [ ] Correlation engine (facts only)  
-- [ ] Hypothesis engine with confidence levels  
-- [ ] JSON + HTML report  
-- [ ] Spring Boot starter (one dependency)  
-- [ ] 10-minute end-to-end README path  
-- [ ] `v0.1.0` public release  
+| Endpoint | Role |
+|----------|------|
+| `GET /scenarios/s1?delayMs=3000` | S1 |
+| `GET /scenarios/s2/hold` · `GET /scenarios/s2/wait` | S2 |
+| `GET /scenarios/s3?seconds=5` | S3 |
+| `POST /scenarios/s4/leak` | S4 |
+| `GET /internal/txscope/report` | Diagnostic JSON |
 
 ---
 
-## Non-goals (MVP)
+## Report shape
 
-- General APM platform  
-- Multi-tenant SaaS  
-- MySQL / Oracle / Quarkus support (later)  
-- Automatic remediation (killing sessions in production)  
-- Collection of SQL bind parameters  
+| Section | Content |
+|---------|---------|
+| **Pool** | active / idle / pending / max |
+| **Facts** | Observed only (pool, transactions, postgres) |
+| **Hypotheses** | `H1`–`H4` (or `H0`), confidence, next steps |
+| **Insufficient evidence** | e.g. Postgres not sampled when the app pool is full |
 
 ---
 
-## Contributing
+## Modules
 
-Contributions are welcome once the first public milestone is tagged.  
-Please open an issue before starting significant work so we can keep the scope focused.
+| Module | Role |
+|--------|------|
+| `txscope-core` | Collectors, model, hypothesis engine |
+| `txscope-spring-boot-starter` | Auto-config + report endpoint |
+| `demo-app` | Runnable demo (S1–S4) |
+
+---
+
+## Limits (honest)
+
+- Postgres sampling uses the **same** app pool → often empty when the pool is saturated (see `insufficientEvidence`).
+- H2 may use demo transaction names when lock-wait rows are missing.
+- Report endpoint is **internal** — protect it in real deployments.
+- No HTML UI yet.
 
 ---
 
