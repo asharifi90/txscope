@@ -7,6 +7,8 @@ import com.txscope.core.collector.transaction.TransactionTracker;
 import com.txscope.core.collector.transaction.TransactionTrackingAspect;
 import com.txscope.core.report.HypothesisEngine;
 import com.txscope.core.report.ReportService;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
@@ -25,7 +27,8 @@ public class TxScopeAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public PoolSnapshotCollector poolSnapshotCollector(DataSource dataSource) {
+    public PoolSnapshotCollector poolSnapshotCollector(
+            @Qualifier("dataSource") DataSource dataSource) {
         return new PoolSnapshotCollector(dataSource);
     }
 
@@ -41,10 +44,33 @@ public class TxScopeAutoConfiguration {
         return new TransactionTrackingAspect(transactionTracker);
     }
 
+    @Bean(name = "txScopeMonitorDataSource")
+    @ConditionalOnMissingBean(name = "txScopeMonitorDataSource")
+    public DataSource txScopeMonitorDataSource(
+            @Value("${txscope.monitor.jdbc-url:${spring.datasource.url}}") String url,
+            @Value("${txscope.monitor.username:${spring.datasource.username}}") String username,
+            @Value("${txscope.monitor.password:${spring.datasource.password}}") String password) {
+
+        com.zaxxer.hikari.HikariConfig cfg = new com.zaxxer.hikari.HikariConfig();
+        cfg.setPoolName("TxScopeMonitorPool");
+        cfg.setJdbcUrl(url);
+        cfg.setUsername(username);
+        cfg.setPassword(password);
+        cfg.setMaximumPoolSize(1);
+        cfg.setMinimumIdle(0);
+        cfg.setConnectionTimeout(2000);      // fail fast
+        cfg.setValidationTimeout(1000);
+        cfg.setInitializationFailTimeout(-1); // don't kill app startup if monitor DB down
+        cfg.setReadOnly(true);
+        cfg.setAutoCommit(true);
+        return new com.zaxxer.hikari.HikariDataSource(cfg);
+    }
+
     @Bean
     @ConditionalOnMissingBean
-    public PostgresActivityCollector postgresActivityCollector(DataSource dataSource) {
-        return new PostgresActivityCollector(dataSource);
+    public PostgresActivityCollector postgresActivityCollector(
+            @Qualifier("txScopeMonitorDataSource") DataSource monitorDs) {
+        return new PostgresActivityCollector(monitorDs, 2000, 2);
     }
 
     @Bean

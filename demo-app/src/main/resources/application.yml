@@ -8,14 +8,12 @@ spring:
     password: txscope
     driver-class-name: org.postgresql.Driver
     hikari:
-      maximum-pool-size: 5          # Small pool → easier to saturate
+      maximum-pool-size: 5
       minimum-idle: 2
-      connection-timeout: 3000      # 3s → fail fast under load
+      connection-timeout: 3000
       idle-timeout: 600000
       max-lifetime: 1800000
       pool-name: TxScopeHikariPool
-      # leakDetectionThreshold: 2000  # Optional, enable later for S4
-
   jpa:
     hibernate:
       ddl-auto: update

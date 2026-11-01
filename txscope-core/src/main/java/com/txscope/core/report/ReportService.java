@@ -4,6 +4,7 @@ import com.txscope.core.collector.pool.PoolSnapshotCollector;
 import com.txscope.core.collector.postgres.PostgresActivityCollector;
 import com.txscope.core.collector.transaction.TransactionTracker;
 import com.txscope.core.model.Hypothesis;
+import com.txscope.core.model.PostgresSample;
 import com.txscope.core.model.pool.DiagnosticReport;
 import com.txscope.core.model.pool.Fact;
 import com.txscope.core.model.pool.PoolSnapshot;
@@ -57,13 +58,20 @@ public class ReportService {
         List<OpenTransaction> openTxs = transactionTracker.snapshot();
         allFacts.addAll(factsFromTransactions(openTxs));
 
-        List<PgSession> sessions = postgresCollector.collect();
-        allFacts.addAll(factsFromPostgres(sessions));
+        PostgresSample pgSample = postgresCollector.collect();
 
-        if (sessions.isEmpty() && pool != null && pool.isFullyActive()) {
-            builder.addInsufficientEvidence(
-                    "PostgreSQL activity could not be sampled — pool has no free connection for the collector");
+        switch (pgSample.getStatus()) {
+            case OK, EMPTY -> {
+                allFacts.addAll(factsFromPostgres(pgSample.getSessions()));
+            }
+            case TIMEOUT -> builder.addInsufficientEvidence(
+                    "PostgreSQL diagnostic query timed out: " + nullSafe(pgSample.getDetail()));
+            case FAILED -> builder.addInsufficientEvidence(
+                    "PostgreSQL diagnostic collection failed: " + nullSafe(pgSample.getDetail()));
+            case UNAVAILABLE -> builder.addInsufficientEvidence(
+                    "PostgreSQL diagnostic collector unavailable: " + nullSafe(pgSample.getDetail()));
         }
+
 
         for (Fact fact : allFacts) {
             builder.addFact(fact);
@@ -210,5 +218,9 @@ public class ReportService {
 
     private static String nullToDash(String v) {
         return v != null ? v : "-";
+    }
+
+    private static String nullSafe(String s) {
+        return s != null ? s : "no detail";
     }
 }
