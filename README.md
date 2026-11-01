@@ -5,7 +5,8 @@
 When the pool is saturated, metrics only show the symptom (`active = max`, `pending > 0`).  
 TxScope correlates pool state, Spring transactions, and PostgreSQL activity into a local JSON report with labelled hypotheses.
 
-> **Status:** Early development (MVP diagnostics work for S1–S4). Not a production-hardened release.
+> **Status:** Early development. Demo scenarios S1–S4 and JSON diagnostics work locally.  
+> Not a production-hardened release.
 
 ---
 
@@ -18,11 +19,13 @@ mvn spring-boot:run -pl demo-app
 ```
 
 ```bash
-# Saturate with scenario S1, then (while load runs):
+# Example: S1 load, then report while load is still running
 ./scripts/load-s1.sh
 
 curl -s http://localhost:8080/internal/txscope/report | jq
 ```
+
+Report endpoint: `GET /internal/txscope/report`
 
 ---
 
@@ -45,14 +48,25 @@ curl -s http://localhost:8080/internal/txscope/report | jq
 
 ---
 
+## How diagnostics stay available when the app pool is full
+
+| Pool | Role |
+|------|------|
+| **Application Hikari pool** | Business traffic (`TxScopeHikariPool`, size 5 in the demo) |
+| **Monitor pool** | Size **1**, used only to sample `pg_stat_activity` / lock waits |
+
+If the app pool is exhausted, TxScope does **not** rely on it for PostgreSQL evidence. The monitor connection has short timeouts so diagnostics fail fast instead of hanging.
+
+---
+
 ## Report shape
 
 | Section | Content |
 |---------|---------|
-| **Pool** | active / idle / pending / max |
+| **Pool** | Application pool: active / idle / pending / max |
 | **Facts** | Observed only (pool, transactions, postgres) |
 | **Hypotheses** | `H1`–`H4` (or `H0`), confidence, next steps |
-| **Insufficient evidence** | e.g. Postgres not sampled when the app pool is full |
+| **Insufficient evidence** | e.g. monitor timeout or collection failure (not silent “empty DB”) |
 
 ---
 
@@ -68,10 +82,11 @@ curl -s http://localhost:8080/internal/txscope/report | jq
 
 ## Limits (honest)
 
-- Postgres sampling uses the **same** app pool → often empty when the pool is saturated (see `insufficientEvidence`).
-- H2 may use demo transaction names when lock-wait rows are missing.
-- Report endpoint is **internal** — protect it in real deployments.
-- No HTML UI yet.
+- Early MVP: demo wiring may use explicit config; harden starter auto-config over time.
+- H2 can still use demo transaction names as a secondary signal when useful.
+- Report endpoint is **internal**, protect or disable it in real deployments.
+- No HTML UI yet; JSON only.
+- Not a full APM — focused on connection-pool saturation diagnosis.
 
 ---
 
