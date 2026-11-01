@@ -10,10 +10,8 @@ import com.txscope.core.report.ReportService;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
+import org.springframework.boot.autoconfigure.condition.*;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.EnableAspectJAutoProxy;
 
@@ -23,6 +21,7 @@ import javax.sql.DataSource;
 @ConditionalOnClass(DataSource.class)
 @ConditionalOnBean(DataSource.class)
 @EnableAspectJAutoProxy
+@EnableConfigurationProperties(TxScopeProperties.class)
 public class TxScopeAutoConfiguration {
 
     @Bean
@@ -96,6 +95,7 @@ public class TxScopeAutoConfiguration {
     @Bean
     @ConditionalOnWebApplication
     @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "txscope", name = "report-enabled", havingValue = "true")
     public TxScopeReportController txScopeReportController(ReportService reportService) {
         return new TxScopeReportController(reportService);
     }

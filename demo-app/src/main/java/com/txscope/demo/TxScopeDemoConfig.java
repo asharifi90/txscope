@@ -102,9 +102,4 @@ public class TxScopeDemoConfig {
                 postgresActivityCollector,
                 hypothesisEngine);
     }
-
-    @Bean
-    public TxScopeReportController txScopeReportController(ReportService reportService) {
-        return new TxScopeReportController(reportService);
-    }
 }
