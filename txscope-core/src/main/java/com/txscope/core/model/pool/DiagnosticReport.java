@@ -1,5 +1,6 @@
 package com.txscope.core.model.pool;
 
+import com.txscope.core.model.CollectorOutcome;
 import com.txscope.core.model.Hypothesis;
 
 
@@ -17,18 +18,20 @@ public class DiagnosticReport {
     private final List<Fact> facts;
     private final List<Hypothesis> hypotheses;
     private final List<String> insufficientEvidence;
+    private final List<CollectorOutcome> collection;
 
     public DiagnosticReport(
             Instant generatedAt,
             PoolSnapshot pool,
             List<Fact> facts,
             List<Hypothesis> hypotheses,
-            List<String> insufficientEvidence) {
+            List<String> insufficientEvidence, List<CollectorOutcome> collection) {
         this.generatedAt = generatedAt;
         this.pool = pool;
         this.facts = facts != null ? List.copyOf(facts) : List.of();
         this.hypotheses = hypotheses != null ? List.copyOf(hypotheses) : List.of();
         this.insufficientEvidence = insufficientEvidence != null ? List.copyOf(insufficientEvidence) : List.of();
+        this.collection = collection != null ? List.copyOf(collection) : List.of();
     }
 
     public Instant getGeneratedAt() {
@@ -55,12 +58,22 @@ public class DiagnosticReport {
         return new Builder();
     }
 
+    public List<CollectorOutcome> getCollection() {
+        return collection;
+    }
+
     public static final class Builder {
         private Instant generatedAt = Instant.now();
         private PoolSnapshot pool;
         private final List<Fact> facts = new ArrayList<>();
         private final List<Hypothesis> hypotheses = new ArrayList<>();
         private final List<String> insufficientEvidence = new ArrayList<>();
+        private final List<CollectorOutcome> collection = new ArrayList<>();
+
+        public Builder addCollection(CollectorOutcome collection) {
+            this.collection.add(collection);
+            return this;
+        }
 
         public Builder generatedAt(Instant generatedAt) {
             this.generatedAt = generatedAt;
@@ -104,7 +117,7 @@ public class DiagnosticReport {
         }
 
         public DiagnosticReport build() {
-            return new DiagnosticReport(generatedAt, pool, facts, hypotheses, insufficientEvidence);
+            return new DiagnosticReport(generatedAt, pool, facts, hypotheses, insufficientEvidence, List.copyOf(collection));
         }
     }
 }

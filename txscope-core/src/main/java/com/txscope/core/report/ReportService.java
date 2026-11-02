@@ -3,6 +3,8 @@ package com.txscope.core.report;
 import com.txscope.core.collector.pool.PoolSnapshotCollector;
 import com.txscope.core.collector.postgres.PostgresActivityCollector;
 import com.txscope.core.collector.transaction.TransactionTracker;
+import com.txscope.core.model.CollectionStatus;
+import com.txscope.core.model.CollectorOutcome;
 import com.txscope.core.model.Hypothesis;
 import com.txscope.core.model.PostgresSample;
 import com.txscope.core.model.pool.DiagnosticReport;
@@ -42,11 +44,13 @@ public class ReportService {
 
         Optional<PoolSnapshot> poolOpt = poolCollector.collect();
         if (poolOpt.isEmpty()) {
-            builder.addInsufficientEvidence(
-                    "Pool snapshot unavailable (DataSource is not HikariCP or pool not started)");
+            builder.addCollection(new CollectorOutcome(
+                    "pool", CollectionStatus.UNAVAILABLE, "not HikariCP or pool not started"));
+            builder.addInsufficientEvidence("Pool snapshot unavailable");
         } else {
             pool = poolOpt.get();
             builder.pool(pool);
+            builder.addCollection(new CollectorOutcome("pool", CollectionStatus.OK, null));
             List<Fact> poolFacts = factsFromPool(pool);
             allFacts.addAll(poolFacts);
             if (pool.getActive() == 0 && pool.getPending() == 0) {
@@ -56,20 +60,23 @@ public class ReportService {
         }
 
         List<OpenTransaction> openTxs = transactionTracker.snapshot();
+        builder.addCollection(new CollectorOutcome(
+                "transaction",
+                openTxs.isEmpty() ? CollectionStatus.EMPTY : CollectionStatus.OK,
+                openTxs.isEmpty() ? "no open Spring transactions observed" : null));
         allFacts.addAll(factsFromTransactions(openTxs));
 
-        PostgresSample pgSample = postgresCollector.collect();
+        PostgresSample pg = postgresCollector.collect();
+        builder.addCollection(new CollectorOutcome(
+                "postgres",
+                pg.getStatus(),
+                pg.getDetail()));
 
-        switch (pgSample.getStatus()) {
-            case OK, EMPTY -> {
-                allFacts.addAll(factsFromPostgres(pgSample.getSessions()));
-            }
-            case TIMEOUT -> builder.addInsufficientEvidence(
-                    "PostgreSQL diagnostic query timed out: " + nullSafe(pgSample.getDetail()));
-            case FAILED -> builder.addInsufficientEvidence(
-                    "PostgreSQL diagnostic collection failed: " + nullSafe(pgSample.getDetail()));
-            case UNAVAILABLE -> builder.addInsufficientEvidence(
-                    "PostgreSQL diagnostic collector unavailable: " + nullSafe(pgSample.getDetail()));
+        switch (pg.getStatus()) {
+            case OK, EMPTY -> allFacts.addAll(factsFromPostgres(pg.getSessions()));
+            case TIMEOUT, FAILED, UNAVAILABLE ->
+                    builder.addInsufficientEvidence(
+                            "PostgreSQL: " + pg.getStatus() + (pg.getDetail() != null ? " — " + pg.getDetail() : ""));
         }
 
 
