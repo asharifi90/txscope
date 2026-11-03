@@ -3,6 +3,7 @@ package com.txscope.demo;
 import com.txscope.core.model.Hypothesis;
 import com.txscope.core.model.pool.DiagnosticReport;
 import com.txscope.core.report.ReportService;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,6 +25,15 @@ class S4LeakDiagnosisIT extends AbstractTxScopeIT {
 
     @Autowired
     ReportService reportService;
+
+    @AfterEach
+    void cleanup() {
+        try {
+            rest.exchange("http://localhost:" + port + "/scenarios/s4/release",
+                    HttpMethod.POST, null, String.class);
+        } catch (Exception ignored) {
+        }
+    }
 
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
